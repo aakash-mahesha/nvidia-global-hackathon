@@ -46,22 +46,24 @@ HF_OPTIONAL_REPOS: list[tuple[str, str]] = [
     ("nvidia/Cosmos3-Edge", "Cosmos monitor target for Orin Nano Super"),
 ]
 
-# (env var, required?, remediation hint)
+# (env var, required?, shared?, remediation hint)
 # "required" = no sane default — must be a real value before cloud work runs.
-ENV_VARS: list[tuple[str, bool, str]] = [
-    ("NEBIUS_PROJECT_ID", True, "Nebius console → IAM → Projects (docs/SETUP.md step 3)"),
-    ("NEBIUS_IAM_TOKEN", False, "or run `npa configure` — it writes ~/.npa/credentials"),
-    ("EVDATA_BUCKET", True, "object-storage bucket for episodes — create in Nebius console"),
-    ("NEBIUS_S3_ENDPOINT", False, "has default: https://storage.eu-north1.nebius.cloud"),
-    ("TOKEN_FACTORY_API_KEY", True, "Token Factory console → API keys (NOT the IAM token)"),
-    ("TOKEN_FACTORY_BASE_URL", False, "has default: https://api.tokenfactory.us-central1.nebius.com/v1/"),
-    ("PERMIT_MODEL_ID", False, "placeholder default — pin real Nemotron SKU at day-1 freeze"),
-    ("NGC_API_KEY", True, "https://org.ngc.nvidia.com → Setup → API Key"),
-    ("HF_TOKEN", True, "https://huggingface.co/settings/tokens + accept gated terms"),
-    ("TAILSCALE_AUTHKEY", False, "Tailscale admin → Keys; or interactive `tailscale up`"),
-    ("EVENT_BUS_URL", True, "event-bus URL per docs/CONTRACTS.md §3 (tech TBD at freeze)"),
-    ("LEROBOT_DATASET_ROOT", False, "has default: ./data/lerobot"),
-    ("JOB_KILL_TIMEOUT", False, "has default: 3600s — hard kill-timer on scheduled jobs"),
+# "shared" = team value that lives in the committed .env.shared (tenant
+# owner fills it); personal creds live in each dev's gitignored .env.
+ENV_VARS: list[tuple[str, bool, bool, str]] = [
+    ("NEBIUS_PROJECT_ID", True, True, "team tenant project — owner fills .env.shared (docs/SETUP.md §0)"),
+    ("NEBIUS_IAM_TOKEN", False, False, "your IAM token — or `npa configure` writes ~/.npa/credentials"),
+    ("EVDATA_BUCKET", True, True, "team episode bucket — owner fills .env.shared"),
+    ("NEBIUS_S3_ENDPOINT", False, True, "has default: https://storage.eu-north1.nebius.cloud"),
+    ("TOKEN_FACTORY_API_KEY", True, False, "Token Factory console → API keys (NOT the IAM token)"),
+    ("TOKEN_FACTORY_BASE_URL", False, True, "has default: https://api.tokenfactory.us-central1.nebius.com/v1/"),
+    ("PERMIT_MODEL_ID", False, True, "placeholder default — pin real Nemotron SKU at day-1 freeze"),
+    ("NGC_API_KEY", True, False, "https://org.ngc.nvidia.com → Setup → API Key"),
+    ("HF_TOKEN", True, False, "https://huggingface.co/settings/tokens + accept gated terms"),
+    ("TAILSCALE_AUTHKEY", False, False, "Tailscale admin → Keys; or interactive `tailscale up`"),
+    ("EVENT_BUS_URL", True, True, "event-bus URL per docs/CONTRACTS.md §3 (tech TBD at freeze)"),
+    ("LEROBOT_DATASET_ROOT", False, True, "has default: ./data/lerobot"),
+    ("JOB_KILL_TIMEOUT", False, True, "has default: 3600s — hard kill-timer on scheduled jobs"),
 ]
 
 TOKEN_FACTORY_TIMEOUT = 15  # seconds
@@ -120,29 +122,43 @@ def main() -> int:
     offline: bool = args.offline
 
     repo_root = Path(__file__).resolve().parent.parent
-    dotenv = load_dotenv(repo_root / ".env")
+    shared_env = load_dotenv(repo_root / ".env.shared")
+    personal_env = load_dotenv(repo_root / ".env")
 
     def env(name: str) -> str:
-        # real environment wins over .env file
-        return os.environ.get(name) or dotenv.get(name, "")
+        # real environment > personal .env > committed .env.shared
+        return os.environ.get(name) or personal_env.get(name) or shared_env.get(name, "")
+
+    def env_src(name: str) -> str:
+        if os.environ.get(name):
+            return "environment"
+        if personal_env.get(name):
+            return ".env"
+        return ".env.shared"
 
     rep = Report()
     print(f"\neVTOL credential check  ({'OFFLINE — local config only' if offline else 'online'})\n")
     print(f"  {'STATUS':<8} {'CHECK':<38} REMEDIATION / DETAIL")
     print(f"  {'-' * 8} {'-' * 38} {'-' * 40}")
 
-    # ---- .env file presence -------------------------------------------------
-    if (repo_root / ".env").is_file():
-        rep.add(OK, ".env file", "found")
+    # ---- config file presence ------------------------------------------------
+    if (repo_root / ".env.shared").is_file():
+        rep.add(OK, ".env.shared file", "committed team values present")
     else:
-        rep.add(MISSING, ".env file", "cp .env.example .env then fill it in (docs/SETUP.md)")
+        rep.add(MISSING, ".env.shared file",
+                "committed team config missing — restore it (it holds shared resource IDs)")
+    if (repo_root / ".env").is_file():
+        rep.add(OK, ".env file", "found (personal secrets)")
+    else:
+        rep.add(MISSING, ".env file", "cp .env.example .env then fill YOUR keys (docs/SETUP.md)")
 
     # ---- env vars -----------------------------------------------------------
-    for name, required, hint in ENV_VARS:
+    for name, required, shared, hint in ENV_VARS:
         if env(name):
-            rep.add(OK, f"env:{name}")
+            rep.add(OK, f"env:{name}", f"from {env_src(name)}")
         elif required:
-            rep.add(MISSING, f"env:{name}", hint)
+            tag = " (team-shared)" if shared else " (personal)"
+            rep.add(MISSING, f"env:{name}{tag}", hint)
         else:
             rep.add(MISSING, f"env:{name} (optional)", hint)
 

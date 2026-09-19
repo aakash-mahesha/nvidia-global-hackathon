@@ -5,10 +5,11 @@ Usage:
     settings = load_settings()              # raises MissingConfigError w/ list
     settings = load_settings(strict=False)  # warns, returns partial settings
 
-BaseSettings reads real env vars first, then .env — so exports always win
-over the file. All names mirror .env.example exactly. Anything not yet
-decided at the day-1 contract freeze is Optional with a sane default where
-one exists.
+Layering (lowest → highest precedence): committed `.env.shared` (team
+resource IDs, no secrets) < personal `.env` (secrets + overrides, gitignored)
+< real environment variables. All names mirror .env.example exactly.
+Anything not yet decided at the day-1 contract freeze is Optional with a
+sane default where one exists.
 """
 
 from __future__ import annotations
@@ -55,8 +56,12 @@ class Settings(BaseSettings):
     """All project configuration, typed. Optional fields may be None until
     the corresponding account/credential is set up (docs/SETUP.md)."""
 
+    # Layered config: committed team values first, personal secrets/overrides
+    # second, real env vars always win. .env.shared holds non-secret team
+    # resource IDs (one Nebius tenant — billing cannot merge across tenants);
+    # .env holds each developer's personal keys (gitignored).
     model_config = SettingsConfigDict(
-        env_file=REPO_ROOT / ".env",
+        env_file=(REPO_ROOT / ".env.shared", REPO_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -105,13 +110,18 @@ class Settings(BaseSettings):
 
 
 def load_settings(env_file: Optional[Path] = None, strict: bool = True) -> Settings:
-    """Build Settings from env vars + .env.
+    """Build Settings from env vars + .env.shared + .env.
 
-    strict=True  → raise MissingConfigError listing every missing required var.
+    env_file    → extra file layered on top of .env.shared (e.g. a test env).
+    strict=True → raise MissingConfigError listing every missing required var.
     strict=False → return a partial Settings; caller can inspect
                    settings.missing_required() (e.g. early-bootstrap code).
     """
-    settings = Settings(_env_file=env_file or REPO_ROOT / ".env")
+    files: tuple[Path, ...] = (
+        REPO_ROOT / ".env.shared",
+        env_file or REPO_ROOT / ".env",
+    )
+    settings = Settings(_env_file=files)
     missing = settings.missing_required()
     if strict and missing:
         raise MissingConfigError(missing)
