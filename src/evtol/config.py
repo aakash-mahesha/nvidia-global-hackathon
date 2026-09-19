@@ -1,22 +1,23 @@
-"""Typed settings loaded from .env via python-dotenv.
+"""Typed settings loaded from .env via pydantic-settings.
 
 Usage:
     from evtol.config import load_settings
-    settings = load_settings()            # raises MissingConfigError w/ list
+    settings = load_settings()              # raises MissingConfigError w/ list
     settings = load_settings(strict=False)  # warns, returns partial settings
 
-All names mirror .env.example exactly. Anything not yet decided at the
-day-1 contract freeze is Optional with a sane default where one exists.
+BaseSettings reads real env vars first, then .env — so exports always win
+over the file. All names mirror .env.example exactly. Anything not yet
+decided at the day-1 contract freeze is Optional with a sane default where
+one exists.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,9 +51,16 @@ class MissingConfigError(RuntimeError):
         )
 
 
-class Settings(BaseModel):
+class Settings(BaseSettings):
     """All project configuration, typed. Optional fields may be None until
     the corresponding account/credential is set up (docs/SETUP.md)."""
+
+    model_config = SettingsConfigDict(
+        env_file=REPO_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     # --- Nebius Cloud (preemptible VMs only; npa owns cluster lifecycle) ---
     nebius_project_id: Optional[str] = Field(default=None, alias="NEBIUS_PROJECT_ID")
@@ -85,8 +93,6 @@ class Settings(BaseModel):
     # --- Ops safety: hard kill-timer on every scheduled job ---
     job_kill_timeout: int = Field(default=3600, alias="JOB_KILL_TIMEOUT")
 
-    model_config = {"populate_by_name": True}
-
     def missing_required(self) -> list[str]:
         """Env-var names among REQUIRED_VARS that are still unset/empty."""
         missing: list[str] = []
@@ -99,25 +105,14 @@ class Settings(BaseModel):
 
 
 def load_settings(env_file: Optional[Path] = None, strict: bool = True) -> Settings:
-    """Load .env into os.environ (without overriding real env vars), then
-    build Settings.
+    """Build Settings from env vars + .env.
 
     strict=True  → raise MissingConfigError listing every missing required var.
     strict=False → return a partial Settings; caller can inspect
                    settings.missing_required() (e.g. early-bootstrap code).
     """
-    load_dotenv(env_file or REPO_ROOT / ".env", override=False)
-    values = {var: os.environ[var] for var in _all_env_names() if var in os.environ}
-    settings = Settings(**values)
+    settings = Settings(_env_file=env_file or REPO_ROOT / ".env")
     missing = settings.missing_required()
     if strict and missing:
         raise MissingConfigError(missing)
     return settings
-
-
-def _all_env_names() -> tuple[str, ...]:
-    """Every env var Settings knows about (aliases)."""
-    names = []
-    for name, field in Settings.model_fields.items():
-        names.append(field.alias or name)
-    return tuple(names)

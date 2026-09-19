@@ -5,4 +5,5 @@
 openai==3.13.0            # Token Factory client (OpenAI-compatible API) — released 2026-09-10
 python-dotenv==1.2.3      # .env loading — released 2026-08-16
 pydantic==2.13.5          # schemas (permit decision, settings) — released 2026-08-28
+pydantic-settings==2.15.0 # typed env/.env settings (BaseSettings) — released 2026-08-07
 huggingface_hub==1.31.0   # includes `hf` CLI + gated model downloads — released 2026-09-10
