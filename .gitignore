@@ -1,0 +1,47 @@
+# --- Secrets / credentials (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# npa (Nebius Physical AI) local credentials — mirrors ~/.npa
+.npa/
+**/credentials
+
+# --- Data / artifacts (large, lives on Nebius object storage) ---
+data/
+datasets/
+*.bag
+*.parquet
+*.mp4
+*.hdf5
+checkpoints/
+outputs/
+wandb/
+runs/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- Isaac Sim / Omniverse local caches ---
+.ov/
+isaacsim*/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Internal planning artifacts (orchestrator working docs, not for public repo)
+plans/

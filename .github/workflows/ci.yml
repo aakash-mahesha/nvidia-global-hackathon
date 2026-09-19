@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Credential status — informational in CI: real creds only ever live
+      # in local .env / ~/.npa, never in GitHub. The step prints the MISSING
+      # table in CI logs so drift in .env.example/SETUP.md is visible, but a
+      # non-zero exit (missing creds by design) must not block merges.
+      - name: Credential status table (informational)
+        run: python3 scripts/check_credentials.py --offline
+        continue-on-error: true
+
+      - name: Compile-check all source
+        run: python3 -m compileall -q src

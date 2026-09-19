@@ -1,0 +1,29 @@
+# Heavy ML deps — GPU workbench / Nebius only. Do NOT install on laptops or CI.
+# Deliberately unpinned-ish pending the day-1 contract freeze and a verified
+# working combo on the npa image — record the final pins here once proven.
+#
+#   python3 -m pip install -r requirements-ml.txt
+
+-r requirements.txt
+
+# --- LeRobot — v3 dataset format ONLY (never mix v2.1 paths) ----------------
+# Contract fixes camera names `wrist`/`overhead`; episodes carry wind+lighting
+# tags. Pin the exact release after the W1.1 freeze.
+lerobot
+
+# --- Isaac Sim / Isaac Lab — sprung-target env (W1.6) -----------------------
+# Prefer the npa workbench image if it ships Isaac Sim. Otherwise:
+#   pip install 'isaacsim[all,extscache]' --extra-index-url https://pypi.nvidia.com
+#   then Isaac Lab: git clone https://github.com/isaac-sim/IsaacLab && ./isaaclab.sh -i
+# LeIsaac (browser teleop): https://github.com/LightwheelAI/leisaac — installs
+# inside IsaacLab; also ships via LeRobot EnvHub env IDs (LeIsaac-SO101-*).
+
+# --- GR00T fine-tune/eval (W2.1/W3.2) ---------------------------------------
+# Isaac-GR00T installs from source, not PyPI:
+#   git clone https://github.com/NVIDIA/Isaac-GR00T && pip install -e Isaac-GR00T
+# Needs the HF gate for nvidia/GR00T-N1.7-3B AND nvidia/Cosmos-Reason2-2B.
+
+# --- Cosmos monitor + generation ---------------------------------------------
+# nvidia/Cosmos3-Super (+ -Image2Video) for generation sweeps;
+# nvidia/Cosmos3-Edge for the Orin Nano Super monitor (desktop-GPU fallback
+# if <25 Hz). Install path per model cards once gates are accepted.

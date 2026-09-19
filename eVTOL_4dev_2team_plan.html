@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>eVTOL Charging (arm) — 4-developer / 2-site execution plan</title>
+<style>
+ :root{--ink:#14181d;--mut:#5b6672;--line:#dfe4ea;--a:#0b6b5f;--b:#2f4d8a;--warn:#8a3b12;--bg:#fff}
+ *{box-sizing:border-box}
+ body{font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);margin:0;padding:40px 44px 80px;max-width:1080px}
+ h1{font-size:26px;margin:0 0 4px}
+ h2{font-size:19px;margin:38px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+ h3{font-size:15px;margin:22px 0 6px}
+ p,li{margin:6px 0}
+ .sub{color:var(--mut);margin:0 0 6px}
+ table{border-collapse:collapse;width:100%;margin:10px 0 6px;font-size:14px}
+ th,td{border:1px solid var(--line);padding:7px 9px;vertical-align:top;text-align:left}
+ th{background:#f4f6f8;font-weight:600}
+ td.k{white-space:nowrap;font-weight:600}
+ code{background:#f2f4f7;padding:1px 4px;border-radius:3px;font-size:13px}
+ .A{color:var(--a);font-weight:600}
+ .B{color:var(--b);font-weight:600}
+ .box{border:1px solid var(--line);border-left:4px solid var(--a);padding:10px 14px;margin:12px 0;background:#fafbfc}
+ .box.b{border-left-color:var(--b)}
+ .box.w{border-left-color:var(--warn)}
+ .tag{display:inline-block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:3px;background:#eef1f4;color:var(--mut);margin-right:6px}
+ ul{margin:6px 0 6px 18px;padding:0}
+ .gantt td{padding:3px 4px}
+ .bar{height:16px;border-radius:3px;display:block}
+ .ba{background:#0b6b5f}.bb{background:#2f4d8a}.bc{background:#b08300}.bd{background:#8a3b12}
+ .small{font-size:13px;color:var(--mut)}
+ hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+</style>
+</head>
+<body>
+
+<h1>eVTOL Charging (arm) — execution plan for 4 developers, 2 sites</h1>
+<p class="sub">Speed-optimised rewrite of the 18 Sep kickoff plan. Four developers, two pairs, two locations, <strong>both on EST, evenings + weekends</strong>. Arm not yet ordered; software and simulation lead. Submission target <strong>Mon 26 Oct</strong> (3 days of slack before the 29th; hard freeze 27 Oct).</p>
+
+<div class="box w">
+<strong>Do these tonight — they cost minutes of effort and buy days of calendar.</strong> None of them depend on any decision you have not already made.
+<ul>
+<li><strong>Order the SO-101 pair.</strong> Working software-first is right; <em>purchasing</em> later is not. Shipping is calendar you cannot compress later, and SO-101 variants were already showing sold out at some vendors. One rig + spare servos + PSUs is ~$300–550; order it before the budget conversation, because the hard rubric requirement of one minute of hardware footage dies if the arm lands in week 5.</li>
+<li><strong>Accept the Hugging Face gated terms</strong> for GR00T N1.7 and Cosmos 3 (log in → model page → accept licence). Some gates auto-approve, some are manually reviewed and take days. <code>npa workbench health access</code> prints every page still pending.</li>
+<li><strong>Create the NGC account and API key</strong>, and the Token Factory key (separate from the Nebius Cloud IAM token).</li>
+<li><strong>Claim hackathon + Builder Program credits</strong> ($400+).</li>
+</ul>
+</div>
+
+<h2>1. The shape of the problem</h2>
+<p>Evenings-only changes which constraint binds. At roughly <strong>20 h per person per week</strong> you have about <strong>480 person-hours</strong> total — the equivalent of a four-person team working full-time for three weeks, spread over six. Capacity, not rig access, is now the limit, and the plan below is cut to fit rather than hoping.</p>
+<table>
+<tr><th>Serialiser</th><th>Why it blocks</th><th>Fix</th></tr>
+<tr><td class="k">Evening capacity</td><td>~480 person-hours for a plan originally scoped at roughly double that</td><td><strong>Apply the cut list (§8) now, not in week 5.</strong> Two ablation arms instead of three, console at v1 only, one wind ladder instead of a sweep. Protect the three beats that score: latch, abort, refusal.</td></tr>
+<tr><td class="k">Hardware lead time</td><td>Nothing physical — interlocks, teleop data, the video's hardware minute — can start until the arm lands</td><td><strong>Order tonight</strong> and treat everything before arrival as sim work. Keep a one-evening <em>arrival checklist</em> (§4a) so the arm plugs into a pipeline that already runs. Order spares in the same basket.</td></tr>
+<tr><td class="k">Data before training</td><td>GR00T fine-tune waits on recorded demos, which wait on the rig</td><td><strong>Rehearse the entire cloud pipeline on a public SO-101 LeRobot v3 dataset</strong> and on Isaac Sim episodes. When real data lands, changing the dataset path is the only new step.</td></tr>
+<tr><td class="k">Cross-site handoffs</td><td>Site 2 cannot see, hear or touch the rig; "is the latch actually closed?" is a 20-minute round trip</td><td><strong>Freeze five interfaces on day 1</strong> (§3), ship a rig <em>mock</em> so the cloud/console side never waits for hardware, and set up remote rig access properly (§6) instead of improvising it in week 3.</td></tr>
+</table>
+<p class="small"><strong>Decided: one rig.</strong> It lives at site 1 and both sites reach it over the network (§6). That is workable — with evenings-only, people-hours bind before rig-hours — but it makes the rig a <em>single point of failure and a shared resource</em>, which §6 and the spares policy exist to handle.</p>
+
+<h2>2. Team split</h2>
+<p>Since anyone can take any work, these are <strong>ownership assignments, not skill boundaries</strong> — one name accountable per lane so nothing is dropped in a 3-hour evening. The one assignment that is <em>not</em> negotiable: whoever is physically nearest the arm when it arrives owns A1, and they should be at the site with the most bench space, a printer and a power outlet you can leave wired for six weeks.</p>
+
+<div class="box">
+<span class="tag">Site 1</span><span class="A">Team A — Rig &amp; Autonomy</span> (co-located with <em>the</em> rig, the wind fan, the E-stop)
+<ul>
+<li><span class="A">A1 · Hardware/electrical.</span> Orders, arm build, servos/PSUs, sprung mount + ESP32, printed fuselage + CCS2 inlet + magnets, fiducial ring, E-stop, IR break-beam, FSR, <strong>relay permissive wiring</strong>, anemometer + box fan, latch force tests.</li>
+<li><span class="A">A2 · On-robot software.</span> 200 Hz servo tier, deterministic fine-align → insert → latch-verify, compliance, the learned→deterministic handoff, teleop capture into LeRobot v3, on-edge policy serving, Cosmos monitor on the Orin.</li>
+</ul>
+</div>
+
+<div class="box b">
+<span class="tag">Site 2</span><span class="B">Team B — Cloud, Agent &amp; Story</span> (no local hardware; reaches the rig remotely per §6)
+<ul>
+<li><span class="B">B1 · ML/Nebius.</span> <code>npa</code> setup, three smoke tests, GPU lifecycle and cost, GR00T download/fine-tune/eval/serve, Cosmos generation sweeps, Isaac Sim sprung-target env, Jobs eval fan-out, the ablation.</li>
+<li><span class="B">B2 · Agent, console, video.</span> Nemotron permit reasoner on Token Factory, procedure/BMS/NOTAM source docs, pad-operator console, telemetry ingest, repo hygiene &amp; compliance checklist, storyboard, <strong>remote directing</strong> of the hardware shoot, screen-capture of console/reasoner beats, edit. (Camera is physically operated by A1/A2 — see §9.)</li>
+</ul>
+</div>
+
+<p class="small"><strong>Bus-factor rule:</strong> every lane has a primary and a named second who has run it at least once — with evenings only, one person unavailable for three nights must not stop a lane.</p>
+
+<h2>3. Day-1 interface freeze (the single highest-leverage hour of the project)</h2>
+<p>Write these into <code>docs/CONTRACTS.md</code> on Saturday and treat changes as a joint decision. Everything after this is parallel.</p>
+<table>
+<tr><th>Contract</th><th>Owner</th><th>Content</th></tr>
+<tr><td class="k">Dataset schema</td><td>A2 + B1</td><td>LeRobot <strong>v3 only</strong> (never mix v2.1 paths), joint order, camera names (<code>wrist</code>, <code>overhead</code>), fps, episode metadata, wind-setting + lighting tags on every episode.</td></tr>
+<tr><td class="k">Policy I/O</td><td>B1</td><td>State-relative action chunks, chunk length, 5–10 Hz emit, serving endpoint shape; servo tier interpolates to 200 Hz.</td></tr>
+<tr><td class="k">Event bus</td><td>A2</td><td>JSON topics <code>/rig/state</code>, <code>/rig/interlock</code>, <code>/monitor/verdict</code>, <code>/permit/decision</code>, <code>/clock/turnaround</code>. One schema, used by rig, console, monitor and reasoner.</td></tr>
+<tr><td class="k">Permit decision</td><td>B2</td><td><code>{authorized, profile, limits, reasons[], refusal_code, inputs_digest, model_id}</code> — the refusal path is a first-class output, it is the beat in the video.</td></tr>
+<tr><td class="k">Rig mock</td><td>A2 (ship by Sun)</td><td>A replay/synthetic publisher on the same topics, plus 3 recorded bag files. B2 builds the entire console against this and never blocks on hardware.</td></tr>
+</table>
+
+<h2>4. Six weeks of evenings, sim-first</h2>
+<p class="small">Bars: <span style="color:#0b6b5f">■</span> Team A &nbsp; <span style="color:#2f4d8a">■</span> Team B &nbsp; <span style="color:#b08300">■</span> joint &nbsp; <span style="color:#8a3b12">■</span> slack/film</p>
+<table class="gantt">
+<tr><th style="width:30%">Track</th><th>W1<br><span class="small">19–25 Sep</span></th><th>W2<br><span class="small">26 Sep–2 Oct</span></th><th>W3<br><span class="small">3–9 Oct</span></th><th>W4<br><span class="small">10–16 Oct</span></th><th>W5<br><span class="small">17–23 Oct</span></th><th>W6<br><span class="small">24–29 Oct</span></th></tr>
+<tr><td>Order + printing, then rig build &amp; interlocks (A1)</td><td><span class="bar ba" style="opacity:.45"></span></td><td><span class="bar ba" style="opacity:.45"></span></td><td><span class="bar ba"></span></td><td><span class="bar ba" style="opacity:.4"></span></td><td></td><td></td></tr>
+<tr><td>Deterministic tier in sim → on rig (A2)</td><td><span class="bar ba" style="opacity:.5"></span></td><td><span class="bar ba"></span></td><td><span class="bar ba"></span></td><td><span class="bar ba" style="opacity:.6"></span></td><td></td><td></td></tr>
+<tr><td>Isaac Sim env + cloud pipeline on public/sim data (B1)</td><td><span class="bar bb"></span></td><td><span class="bar bb"></span></td><td><span class="bar bb" style="opacity:.6"></span></td><td></td><td></td><td></td></tr>
+<tr><td>Fine-tune on real data + nightly fan-out (B1)</td><td></td><td></td><td><span class="bar bb"></span></td><td><span class="bar bb"></span></td><td><span class="bar bb" style="opacity:.5"></span></td><td></td></tr>
+<tr><td>Permit reasoner + console (B2)</td><td><span class="bar bb" style="opacity:.6"></span></td><td><span class="bar bb"></span></td><td><span class="bar bb"></span></td><td><span class="bar bb" style="opacity:.6"></span></td><td></td><td></td></tr>
+<tr><td>Integration + ablation (joint)</td><td></td><td></td><td><span class="bar bc" style="opacity:.5"></span></td><td><span class="bar bc"></span></td><td><span class="bar bc"></span></td><td></td></tr>
+<tr><td>Film, edit, submit</td><td></td><td></td><td></td><td></td><td><span class="bar bd"></span></td><td><span class="bar bd"></span></td></tr>
+</table>
+
+<h3>Week 1 · 19–25 Sep — order, unlock the gates, prove the platform</h3>
+<table>
+<tr><td class="k">Tonight</td><td>The four lead-time items in the box at the top: arm order, HF gated terms, NGC key, credits. Nothing else in week 1 matters as much.</td></tr>
+<tr><td class="k">A1</td><td>Full BOM ordered with express shipping and a second vendor for anything low-stock: SO-101 pair, spare servos, PSUs, E-stop, IR break-beam, FSR, powered hub, box fan + anemometer, magnets, cable simulant, wrist webcam, smart bulbs, filming kit (§9), <strong>spares per §6</strong>, optional Orin Nano Super. Start printing fuselage, CCS2 inlet and fiducial ring immediately — printing runs while you sleep.</td></tr>
+<tr><td class="k">A2</td><td>Contracts doc (§3); rig mock + synthetic telemetry publisher by Sunday; servo-tier and deterministic-align skeleton written against the sim, not the hardware; <strong>remote rig access stood up against the mock</strong> (Tailscale, event-bus-only control, video feeds) so it is proven before there is an arm to break.</td></tr>
+<tr><td class="k">B1</td><td><code>npa configure</code>, <code>health preflight</code>, <code>health access</code>; <strong>all three smoke tests PASS by Wednesday evening</strong> — they are the only agenda item until they do. Then Isaac Sim env with the sprung target, started immediately because it is now the long pole.</td></tr>
+<tr><td class="k">B2</td><td>Permit-reasoner source documents (charging procedure CCS vs GEACS, BMS fault codes, ambient/wind limits, NOTAM, site emergency plan) plus the contradiction cases it must refuse. Nemotron call working end to end against them. Public repo, Apache-2.0, CHANGELOG, FEEDBACK.md, pre-existing-work statement.</td></tr>
+<tr><td class="k">Exit</td><td>3 smoke tests PASS · arm in transit with a tracking number · HF gates approved (or pending with a date) · contracts frozen · rig mock live · reasoner refuses a seeded contradiction.</td></tr>
+</table>
+
+<h3>Week 2 · 26 Sep–2 Oct — build the whole thing in simulation</h3>
+<p class="small">Assume no arm this week. Every deliverable below is reachable without hardware, and each one is a thing you will <em>not</em> have to do on the evening the box arrives.</p>
+<table>
+<tr><td class="k">Sim track (B1 + A2)</td><td>Isaac Sim scene: SO-101, printed inlet, <strong>sprung target with wind disturbance</strong>. LeIsaac browser teleop working → record 30–50 <em>sim</em> demos in LeRobot v3 format. Full cloud path exercised end to end on a public SO-101 v3 dataset <em>and</em> on the sim episodes: download → fine-tune → eval → serve → Jobs fan-out across wind × lighting. The success-vs-wind curve exists this week, in sim.</td></tr>
+<tr><td class="k">Deterministic track (A2)</td><td>Fiducial fine-align → insert → latch-verify implemented and passing in sim; interlock state machine written and unit-tested against the mock (relay permissive, continuity, isolation), so on the real rig it is a wiring job, not a coding job.</td></tr>
+<tr><td class="k">Product track (B2)</td><td>Console v1 on the mock: permit state, monitor status, turnaround clock, incident record. Permit reasoner wired to the real event bus schema. Storyboard first draft — you can already shoot the console and refusal beats.</td></tr>
+<tr><td class="k">Exit</td><td>A policy trained and evaluated end to end on Nebius · a sim success-vs-wind curve · console v1 demoable · deterministic tier green in sim · <strong>arrival checklist written</strong>.</td></tr>
+</table>
+
+<h3>4a. Arrival checklist — the evening the arm lands</h3>
+<p>Written in advance, executed in one sitting by A1 + A2 with the other pair on the call. Nothing here is design work; design was done in sim.</p>
+<ol>
+<li>Assemble arm, PSU, hub; servo IDs and limits set; wrist cam mounted.</li>
+<li>E-stop, IR break-beam and FSR each verified <em>independently</em>; relay permissive proven to <strong>deny</strong> before it is proven to allow.</li>
+<li>Mount printed inlet on the sprung mount; fiducial ring aligned; fan + anemometer positioned; tape-mark the two camera positions (§9) now, not in week 5.</li>
+<li>Static mate 20/20 with the deterministic tier ported from sim.</li>
+<li>First 10 teleop demos recorded and uploaded the same evening — proves the capture path before you scale it.</li>
+</ol>
+
+<h3>Week 3 · 3–9 Oct — real data, sim-to-real, everything joined up</h3>
+<table>
+<tr><td class="k">All four</td><td>Arrival checklist done if it has not been already. Then the evenings go to <strong>data collection: 50–80 demos with the fan on</strong>, run as booked rig slots (§6) — site 1 warden present, either site driving — so the arm is recording for the whole window and nobody is idle waiting for it. Fine-tune on real data, initialised from the sim-trained policy rather than from scratch. Cosmos monitor live with the hand-in-workspace abort. Permit reasoner on the real bus. First full run: approach → handoff → latch → permissive green.</td></tr>
+<tr><td class="k">Exit</td><td>Learned approach + handoff succeeds at the lowest wind setting, on the real rig, with the monitor able to veto. <strong>Make-or-break gate. If the arm has not arrived by 3 Oct, invoke the cut list immediately and plan for a sim-plus-deterministic demo</strong> — decide that on the Friday gate, not in week 5.</td></tr>
+</table>
+
+<h3>Week 4 · 10–16 Oct — curves, ablation, console v2</h3>
+<table>
+<tr><td class="k">B1</td><td>Cosmos augmentation; nightly fan-out on cron; <strong>two-arm ablation only</strong> (GR00T vs GR00T + Cosmos augmentation) — ACT is already cut; demos-to-threshold with and without augmentation; sim-vs-real curve comparison, which is a genuinely interesting slide you get for free from the sim-first order of work.</td></tr>
+<tr><td class="k">A</td><td>Wind ladder: push success rate up the anemometer range; p50/p95 time-to-mate; monitor false-abort and missed-hazard counts.</td></tr>
+<tr><td class="k">B2</td><td>Console v2 on live telemetry: permit state, policy + monitor status, incident record, turnaround clock. Storyboard locked; <strong>full rehearsal shoot on Thu 15 Oct</strong> with whatever works that day, cut into a rough edit — the point is to find the framing, lighting and audio problems while there are still ten days to fix them.</td></tr>
+<tr><td class="k">Exit</td><td>Success-vs-wind curve from real runs · console driving a live run · rough cut exists.</td></tr>
+</table>
+
+<h3>Week 5 · 17–23 Oct — freeze and <em>film</em> (a week earlier than the kickoff plan; the weekend block is the shoot)</h3>
+<table>
+<tr><td class="k">All</td><td>Metrics frozen Monday. Abort beat and refusal beat rehearsed until repeatable. <strong>Film Wed–Fri plus the weekend block, per §9</strong> (hardware at site 1, screen beats at site 2, B2 directing live over the rig feed). README model/Nebius/Token Factory sections with model IDs and endpoints; FEEDBACK.md dated; city association registered.</td></tr>
+<tr><td class="k">Exit</td><td>Two clean runs back to back · ≥1 minute of hardware footage in the can · edit started.</td></tr>
+</table>
+
+<h3>Week 6 · 24–29 Oct — slack, not work</h3>
+<table>
+<tr><td class="k">All</td><td>Mon–Sat: edit, re-shoot only the beats that failed, compliance sweep. <strong>Submit Monday 26 Oct.</strong> Nothing new built after 27 Oct. The remaining days are for the thing that will go wrong.</td></tr>
+</table>
+
+<h2>5. Working rhythm — two locations, one clock (EST), evenings</h2>
+<p>Same timezone removes the handoff tax entirely, so buy speed with <strong>synchrony</strong> instead of async discipline: the whole team is reachable all day, so nothing should ever be blocked for more than an hour.</p>
+<ul>
+<li><strong>Fixed window, e.g. 19:00–22:00 EST, five evenings, plus one long weekend block.</strong> Pick the hours once and defend them; ad-hoc availability is what kills evening projects. Write the window into the calendar tonight.</li>
+<li><strong>10-minute open at 19:00, all four.</strong> One agenda item per week — in week 1 it is literally "do the three smoke tests pass yet". Blockers get an owner and a deadline, not a discussion.</li>
+<li><strong>Last 20 minutes are integration, every evening.</strong> Whatever exists gets wired together and run end to end against the mock or the rig. A 3-hour evening cannot absorb a two-week merge, so there must never be one.</li>
+<li><strong>The weekend block is for the expensive things:</strong> rig assembly, data collection marathons, the rehearsal shoot, the edit. Do not spend it on anything that fits in an evening.</li>
+<li><strong>Always-on room during the window,</strong> plus a <strong>fixed camera pointed at the rig</strong> once it exists. Site 2 must be able to watch a mate attempt without asking.</li>
+<li><strong>Thirty-minute rule.</strong> In a 3-hour evening, stuck for 30 minutes means pull in the second person immediately. Losing an evening to a solo debug costs a sixth of the week.</li>
+<li><strong>Nightly cron does the work you are asleep for.</strong> Fine-tunes and the eval fan-out fire at ~22:30 when you log off; results are waiting the next evening. This is how evenings-only buys back GPU calendar. <span class="B">B1 owns cluster lifecycle</span>: preemptible VMs only, <code>npa cleanup</code>/<code>npa destroy</code> in full order after every session, and a <strong>hard kill-timer on every scheduled job</strong> — an unattended cluster billing overnight is the one mistake that can end the budget conversation badly.</li>
+<li><strong>Trunk-based, small PRs, merge the same evening.</strong> No branch survives to the next day. CI runs the smoke tests plus a replay of the rig mock.</li>
+<li><strong>Friday gate, 30 min, all four:</strong> hit the week's exit criteria or invoke the cut list. Decisions recorded in CHANGELOG. With this little capacity, cutting on time <em>is</em> the schedule.</li>
+<li><strong>Swarm the week-3 gate.</strong> Same clock means all four can attack the first real end-to-end run together; drop the cloud backlog for that week.</li>
+</ul>
+
+<h2>6. One rig, two locations — how site 2 actually touches the hardware</h2>
+<p>The rig is now shared infrastructure. Treat it like a build server: it needs a network path, a booking protocol, a safety rule and a spares policy. Set all four up in week 1 while it still costs nothing.</p>
+
+<h3>Network path (A2, week 1 — before the arm arrives)</h3>
+<ul>
+<li><strong>Tailscale (or equivalent) on the rig host</strong>, so both sites reach it by a stable name with no port forwarding. Test it against the rig <em>mock</em> in week 1; do not discover NAT problems on the evening the arm lands.</li>
+<li><strong>Two always-on video feeds</strong> during the window: the wide rig view and a wrist/detail view. Low latency matters more than resolution — site 2 is using these to judge a mate attempt in real time.</li>
+<li><strong>The event bus is the API.</strong> Site 2 drives the rig only through the §3 topics; nobody SSHes in to poke servos ad hoc. Same interface as the mock, so anything that worked in sim works remotely.</li>
+<li><strong>LeIsaac browser teleop</strong> for remote demo recording — this is the feature that makes one rig behave like more than one, because site 2 can record episodes on site 1's arm while site 1 does something else in the room.</li>
+<li><strong>Auto-upload every episode</strong> to Nebius object storage on capture, so data is never trapped on the rig host.</li>
+</ul>
+
+<h3>Safety rule — non-negotiable</h3>
+<div class="box w"><strong>The arm does not move unless a human at site 1 is physically present with a hand near the E-stop.</strong> No unattended remote motion, ever, no matter how late it is or how small the change. The remote operator can command; only the local warden can energise. This is also exactly the story the project is about, so it costs nothing to say out loud in the video.</div>
+
+<h3>Booking protocol</h3>
+<ul>
+<li><strong>Rig slots are booked in the shared calendar</strong>, minimum 45 minutes, with a named local warden and a named driver. An unbooked evening means the rig is free for whoever is at site 1.</li>
+<li><strong>Every slot starts by declaring its goal in the channel</strong> ("20 demos at fan setting 2" / "verify break-beam abort") and ends with a two-line result. Rig time is the scarcest resource in the project; it should never be spent exploring.</li>
+<li><strong>Batch the physical changes.</strong> A1 keeps a running list of wiring/mounting changes and does them in one sitting rather than one per evening — each teardown costs the whole team a slot.</li>
+<li><strong>Defaults:</strong> hardware-changing work early in the window while both sites are online, data collection later, cron jobs overnight.</li>
+</ul>
+
+<h3>Single-point-of-failure policy</h3>
+<ul>
+<li><strong>Spares of everything cheap and breakable</strong>, ordered with the first order, not after the first failure: servos (the usual casualty), PSU, USB hub and cables, magnets, a second wrist webcam, extra printed inlets and fiducial rings. A $15 servo that takes five days to arrive can cost you a week of the schedule.</li>
+<li><strong>The sim stays current all six weeks.</strong> It is not scaffolding you throw away in week 3 — it is the fallback that lets four people keep working on the evening the arm is in pieces.</li>
+<li><strong>Never disassemble the rig after the week-4 rehearsal shoot</strong> unless something is broken. Camera positions, lighting and mount geometry stay fixed through filming.</li>
+</ul>
+
+<h2>7. Risks and the pre-agreed response</h2>
+<table>
+<tr><th>Risk</th><th>Trigger</th><th>Pre-agreed response</th></tr>
+<tr><td class="k">SO-101 sold out / late</td><td>No ship confirmation by Tue 22 Sep, or no arm by <strong>3 Oct</strong></td><td>Second vendor at any price; borrow an arm from anyone local. Meanwhile all policy work continues in Isaac Sim on public datasets. If nothing by 3 Oct, the demo becomes sim + deterministic tier and the video leans on the console, refusal and curves — decided at that Friday's gate, in the open.</td></tr>
+<tr><td class="k">HF gate still pending</td><td>GR00T N1.7 or Cosmos 3 not approved 48 h after accepting</td><td>Chase on the model page / NVIDIA channels and, in the meantime, run the pipeline on an open policy (ACT or an ungated checkpoint) so the plumbing is proven regardless.</td></tr>
+<tr><td class="k">Evening capacity erodes</td><td>Two consecutive weeks miss exit criteria</td><td>Cut a whole scope item from §8, do not stretch the schedule — there is no schedule left to stretch. The submission date is fixed.</td></tr>
+<tr><td class="k">Learned approach fails in wind</td><td>Week-3 gate missed</td><td>Ship the deterministic tier as the demo and the learned tier as the measured curve ("succeeds below X m/s"). The thesis is 15–20 min → &lt;2 min, not that GR00T solves wind.</td></tr>
+<tr><td class="k">GPU spend runs away</td><td>Any cluster alive &gt;2 h unattended</td><td>Hard rule: preemptible only, teardown after every session, B1 reports spend daily.</td></tr>
+<tr><td class="k">Cosmos monitor too slow on Orin</td><td>&lt;25 Hz on the edge node</td><td>Desktop GPU at the pad for the demo; report edge latency honestly as a number.</td></tr>
+<tr><td class="k">Integration crunch</td><td>First joint end-to-end run slips past 9 Oct</td><td>Freeze the console at v1 and drop Cosmos augmentation breadth; the ablation is already down to two arms.</td></tr>
+<tr><td class="k">The one rig breaks</td><td>Any failure that stops motion</td><td>Fit the spare the same evening (spares are on hand by policy, §6); if it is not fixable that night, the whole team falls back to sim work, which stays current precisely for this. Escalate to buying a replacement arm immediately rather than waiting a week to see.</td></tr>
+<tr><td class="k">Rig site person unavailable</td><td>Site 1 cannot staff the warden role for an evening</td><td>No rig slot that evening — by design. Work moves to sim, cloud, console and edit, all of which have standing backlogs. Book warden-covered evenings a week ahead so this is known, not discovered.</td></tr>
+</table>
+
+<h2>8. Cut list, agreed now so nobody debates it in week 5</h2>
+<p>Dropped the moment a gate is missed, in this order: (1) rotors-running stretch claim — it is already not the thesis; (2) third ablation arm (ACT); (3) console polish beyond permit state + clock + incident record; (4) Cosmos augmentation sweep breadth; (5) the scheduler and post-event report, which are no longer the pitch.</p>
+<p><strong>Never cut:</strong> the interlocks, the live abort beat, the reasoner's refusal beat, one minute of hardware footage, Token Factory cited with model IDs, Apache-2.0 repo + FEEDBACK.md. These are rubric points, not engineering.</p>
+
+<h2>9. Filming with nobody travelling</h2>
+<p>No travel and one rig means the hardware minute is shot by whoever is standing next to it — <span class="A">A1 and A2</span> — while <span class="B">B2 directs live</span> over the always-on rig feed. That works, but only if it is treated as a build task with its own parts and its own rehearsal, not as something that happens in week 6.</p>
+<ul>
+<li><strong>Order the filming kit in week 1, with the rig parts:</strong> phone tripod + a second tripod for the wrist/detail angle, a clip-on or USB mic at the rig (servo noise and the magnet <em>click</em> are the money sounds), two cheap LED panels so lighting is repeatable across days, and a long USB/HDMI run so the rig feed does not wobble. Under $150 and it is the difference between one usable minute and four re-shoots.</li>
+<li><strong>Book the shoot as a long rig slot</strong> (§6) across the week-5 weekend block, with the warden committed in advance. It is the single most valuable use of rig time in the project.</li>
+<li><strong>Two fixed camera positions, marked with tape</strong>, so any take on any day cuts together: (1) wide — arm, sprung target, fan, anemometer and the turnaround clock all in frame; (2) tight on the inlet for the align → insert → latch. Never move them after the week-4 rehearsal.</li>
+<li><strong>B2 directs from the feed in real time</strong> during the shoot window; A2 runs the robot, A1 handles the abort beat (the hand entering the workspace) and safety. Nobody at site 1 also has to think about the edit.</li>
+<li><strong>Screen beats are captured at site 2</strong> — console, permit refusal, the success-vs-wind curve from the nightly run — at full resolution, not filmed off a monitor. They intercut with the hardware footage in the edit.</li>
+<li><strong>Same-day upload discipline:</strong> every take goes to shared storage the day it is shot, with a one-line slate (date, take, wind setting, what it shows). B2 assembles nightly, so by Friday of week 5 you know exactly which beat is missing rather than discovering it during the edit.</li>
+<li><strong>The rehearsal shoot on 15 Oct is mandatory</strong>, even if the robot is only half working. Its only job is to surface the remote-directing problems — audio, framing, feed lag, who says "action" — while they are still cheap.</li>
+</ul>
+
+<hr>
+<p class="small">Consequence of no travel, stated plainly: re-shoots are expensive in coordination, so the schedule buys them back with the week-4 rehearsal and the week-6 slack. If a beat is still missing on Sat 24 Oct, ship the video without it rather than pushing into the 27 Oct freeze.</p>
+
+</body>
+</html>
