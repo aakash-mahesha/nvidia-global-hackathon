@@ -46,3 +46,8 @@ Thumbs.db
 
 # Internal planning artifacts (orchestrator working docs, not for public repo)
 plans/
+
+# Personal agent tooling + private notes (not for public repo)
+.devin/
+AGENTS.md
+CHANGELOG.md
