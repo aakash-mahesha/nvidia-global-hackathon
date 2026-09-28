@@ -48,9 +48,35 @@ decision B2 · rig mock A2 (ships by Sunday).
 
 ## 3. Event bus topics
 
-The bus is the API — nobody SSHes in to poke servos ad hoc. Broker tech
-**TBD** (MQTT / Redis pub/sub / WebSocket); `EVENT_BUS_URL` in `.env`.
-Constants live in `src/evtol/topics.py`.
+The bus is the API — nobody SSHes in to poke servos ad hoc. Topic constants
+live in `src/evtol/topics.py`; the broker address is `EVENT_BUS_URL`.
+
+**Literal payload shapes for all five topics: `docs/BUS-PAYLOADS.md`** — real
+field names, types and example values, plus the `phase`, `hazard`, `outcome`,
+interlock-`reasons` and `refusal_code` enums. The table below is the summary;
+that file is the definition.
+
+- **Broker: MQTT (mosquitto 2.1) — DECIDED, closes the former TBD.** Chosen
+  over Redis pub/sub and raw WebSockets because it is the standard for robot
+  and sensor telemetry, installs in one command on the rig host, and is
+  reachable from both sites over Tailscale by hostname with no port
+  forwarding.
+- **Broker config is committed at `infra/mosquitto.conf`** so all four
+  developers run an identical broker rather than whatever their machine
+  happens to have. Start it with `mosquitto -c infra/mosquitto.conf -v`.
+- **Publishers and subscribers depend ONLY on the topic strings and the JSON
+  payloads — never on a broker-specific API.** Wrap the client once
+  (`src/evtol/bus.py`) and import that everywhere. Swapping brokers must be a
+  one-file change.
+- Addressing: `.env.shared` carries the team default (local broker until the
+  rig host is on Tailscale, then `mqtt://<rig-host>.<tailnet>.ts.net:1883`);
+  a personal `.env` overrides it for local work. Use `127.0.0.1`, not
+  `localhost` — the latter resolves to IPv6 `::1` on macOS.
+- **Delivery (PROPOSED — ratify at the freeze):** QoS 0 for high-rate
+  telemetry (`/rig/state`, `/monitor/verdict`, `/clock/turnaround`), QoS 1 for
+  anything a decision hangs on (`/rig/interlock`, `/permit/decision`).
+  **No retained messages on any topic** — a subscriber reconnecting must see
+  live state, never a stale snapshot of a rig that is no longer there.
 
 | Topic | Publisher → subscribers | Payload (DRAFT) |
 |-------|------------------------|-----------------|
