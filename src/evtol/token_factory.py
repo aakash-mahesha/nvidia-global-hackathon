@@ -19,38 +19,16 @@ import json
 from typing import Any, Optional
 
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from evtol.config import Settings, load_settings
 
-# --- Permit decision schema (frozen field list from the plan) ----------------
+# PermitDecision lives in evtol.messages with the other four topic payloads —
+# one definition, so the reasoner and the console cannot drift apart. Re-exported
+# here because callers of this module reasonably expect to find it.
+from evtol.messages import PermitDecision, RefusalCode  # noqa: F401
 
-
-class PermitDecision(BaseModel):
-    """The reasoner's output, published verbatim on /permit/decision.
-
-    refusal_code is a FIRST-CLASS output: on authorized=False it must carry
-    a machine-readable code (e.g. "WIND_LIMIT_EXCEEDED", "SOURCE_CONTRADICTION")
-    — the video's refusal beat depends on it.
-    """
-
-    authorized: bool = Field(description="permit granted / refused")
-    profile: str = Field(description="named operating envelope, e.g. 'nominal', 'high-wind'")
-    limits: dict[str, Any] = Field(
-        default_factory=dict,
-        description="numeric envelope the interlock tier enforces "
-        "(max wind m/s, approach speed, force caps, timeout) — field set TBD at freeze",
-    )
-    reasons: list[str] = Field(
-        default_factory=list, description="human-readable justification, incl. refusal reasons"
-    )
-    refusal_code: Optional[str] = Field(
-        default=None, description="machine-readable refusal code; REQUIRED when authorized=False"
-    )
-    inputs_digest: str = Field(
-        description="sha256 of the canonicalized inputs the decision was made on"
-    )
-    model_id: str = Field(description="Token Factory model that produced this decision")
+# --- Reasoner inputs ---------------------------------------------------------
 
 
 class PermitInputs(BaseModel):
@@ -89,6 +67,81 @@ def build_client(settings: Optional[Settings] = None) -> OpenAI:
         base_url=settings.token_factory_base_url,
         api_key=settings.token_factory_api_key,
     )
+
+
+def parse_permit_response(
+    raw: str | None,
+    inputs: PermitInputs,
+    model_id: str,
+    request_id: str,
+    run_id: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+) -> PermitDecision:
+    """Turn a raw model response into a PermitDecision. **Never raises.**
+
+    This is the fail-closed half of the reasoner, and it is deliberately
+    independent of the prompt, the corpus and the model call — so it can be
+    written and tested without any of them.
+
+    Anything that goes wrong — no response, non-JSON, missing fields, an
+    invented refusal code, a `limits` value of the wrong type — becomes a
+    REFUSAL carrying `MODEL_OUTPUT_INVALID`, never an authorization. A
+    reasoner that fails open is worse than no reasoner, because the console
+    shows a green permit that nothing actually justified.
+
+    Two fields are stamped from OUR side and the model's own claims are
+    discarded:
+
+    * `inputs_digest` — computed from the inputs we actually sent, so the
+      decision cannot claim to be about a different set of conditions.
+    * `model_id` — taken from configuration, so a response cannot misreport
+      which model produced it. "Token Factory cited with model IDs" is on the
+      never-cut list; that citation has to be trustworthy.
+    """
+    def refusal(detail: str) -> PermitDecision:
+        return PermitDecision(
+            request_id=request_id,
+            run_id=run_id,
+            authorized=False,
+            profile="UNKNOWN",
+            limits={},
+            reasons=[f"Permit reasoner output could not be validated: {detail}"],
+            refusal_code=RefusalCode.MODEL_OUTPUT_INVALID,
+            inputs_digest=inputs.digest(),
+            model_id=model_id,
+            latency_ms=latency_ms,
+        )
+
+    if not raw or not raw.strip():
+        return refusal("empty response")
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return refusal(f"not valid JSON ({e})")
+
+    if not isinstance(payload, dict):
+        return refusal(f"expected a JSON object, got {type(payload).__name__}")
+
+    # Never trust the model's account of what it is or what it was asked.
+    payload.update(
+        {
+            "request_id": request_id,
+            "run_id": run_id,
+            "inputs_digest": inputs.digest(),
+            "model_id": model_id,
+            "latency_ms": latency_ms,
+        }
+    )
+    payload.pop("schema", None)
+    payload.pop("ts", None)
+
+    try:
+        return PermitDecision.model_validate(payload)
+    except ValidationError as e:
+        first = e.errors()[0] if e.errors() else {}
+        where = ".".join(str(p) for p in first.get("loc", ())) or "?"
+        return refusal(f"{where}: {first.get('msg', e)}")
 
 
 def request_permit(
