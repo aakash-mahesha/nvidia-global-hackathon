@@ -14,14 +14,38 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      # Credential status — informational in CI: real creds only ever live
-      # in local .env / ~/.npa, never in GitHub. The step prints the MISSING
-      # table in CI logs so drift in .env.example/SETUP.md is visible, but a
-      # non-zero exit (missing creds by design) must not block merges.
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      # The bus is the API (docs/CONTRACTS.md §3), so CI runs a real broker
+      # with the committed config rather than mocking it. Same file the four
+      # of us run locally — a drift between CI's broker and ours would be
+      # exactly the kind of difference that only shows up on a rig slot.
+      - name: Start the event bus
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mosquitto mosquitto-clients
+          mosquitto -c infra/mosquitto.conf -d
+          for _ in $(seq 1 20); do
+            mosquitto_pub -h 127.0.0.1 -t /ci/ping -m up && exit 0
+            sleep 0.25
+          done
+          echo "broker never came up"; exit 1
+
+      # Contract tests plus a replay of all three scenario bags
+      # (docs/CONTRACTS.md §5: "CI replays the mock alongside smoke tests").
+      # The replay tests fail if the refusal beat stops refusing, if the abort
+      # stops dropping the interlock, or if a bag drifts from the message
+      # contract — the two beats on the never-cut list are guarded here.
+      - name: Tests
+        run: python3 -m pytest -q
+
+      # Credential status — informational only: real credentials live in
+      # local .env / ~/.npa and never in GitHub. The table is printed so drift
+      # in .env.example or SETUP.md is visible, but missing creds are expected
+      # by design and must not block a merge.
       - name: Credential status table (informational)
         run: python3 scripts/check_credentials.py --offline
         continue-on-error: true
-
-      - name: Compile-check all source
-        run: python3 -m compileall -q src

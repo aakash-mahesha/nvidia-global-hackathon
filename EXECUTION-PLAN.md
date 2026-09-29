@@ -100,6 +100,7 @@ three bag-file contents · the real `PERMIT_MODEL_ID` (placeholder today).
 | A2-1.2 | Three bag files: nominal run, wind run, abort beat | A2-1.1 | each replays deterministically through the mock | 1.0 |
 | A2-1.3 | Tailscale on the rig host; both sites reach it by stable name | — | B2 drives the mock over the tailnet, no port forwarding | 1.0 |
 
+
 ### B2
 
 | ID | Task | Dep | Done when | E |
