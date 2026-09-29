@@ -1,28 +1,28 @@
-"""The rig mock — all five topics, driven by one timeline.
+"""The rig mock — all five topics, one timeline, three scenarios.
 
-Deliberately NOT five independent publishers. Every message is derived from
-a single clock and a single phase sequence, so the five channels always tell
-the same story: the permit is granted before APPROACH begins, the interlock
-goes permissive at that same moment, the clock starts when the permit is
-requested. Independent timers would drift within a minute and produce a run
-that could never happen on real hardware — and the console would be built
-against it.
+Deliberately NOT five independent publishers. Every message is derived from a
+single clock and a single phase script, so the channels always tell the same
+story: the permit is answered before the interlock changes, the interlock
+changes before the arm moves, the clock starts when the permit is requested.
+Independent timers would drift within a minute and produce a run that could
+never happen on real hardware — and the console would be built against it.
 
 Motion is scripted rather than random for the same reason. Watching the
 stream you can tell APPROACH from INSERT from RETRACT, which is what makes a
-console worth building; and it is what made three of this file's own bugs
+console worth building; and it is what made four of this file's own bugs
 visible (velocity out by 14x, torque saturating, force re-ramping at a phase
-boundary).
+boundary, the latch reopening during MATED).
 
-    python -m evtol.mock.publisher                       # all five, real rates
-    python -m evtol.mock.publisher --rate 2 -v           # slow enough to read
-    python -m evtol.mock.publisher --wind 9.5            # a windy run
-    python -m evtol.mock.publisher --once                # one of each, for CI
+    python -m evtol.mock.publisher                      # nominal, 20 Hz
+    python -m evtol.mock.publisher --scenario wind      # the refusal beat
+    python -m evtol.mock.publisher --scenario abort     # the abort beat
+    python -m evtol.mock.publisher --rate 2 -v          # slow enough to read
+    python -m evtol.mock.publisher --once               # one of each, for CI
 
-Wind is a slow sine plus gusts, perturbing the joints slightly — standing in
-for the sprung target moving under the fan. A1's measured
-displacement-vs-wind curve (EXECUTION-PLAN A1-2.5) replaces the invented gain
-once it exists.
+Scenarios live in `scenarios.py`. Wind is a slow sine plus gusts, perturbing
+the joints slightly — standing in for the sprung target moving under the fan.
+A1's measured displacement-vs-wind curve (EXECUTION-PLAN A1-2.5) replaces the
+invented gain once it exists.
 """
 
 from __future__ import annotations
@@ -41,11 +41,11 @@ from evtol.bus import Bus
 from evtol.messages import (
     Ambient,
     CameraHealth,
+    Hazard,
     InterlockReason,
     InterlockState,
     Joints,
     MonitorVerdict,
-    Outcome,
     PermitDecision,
     Phase,
     RigState,
@@ -54,6 +54,7 @@ from evtol.messages import (
     TurnaroundClock,
     now_ts,
 )
+from evtol.mock.scenarios import MAX_WIND_MS, NOMINAL, SCENARIOS, Scenario
 from evtol.topics import (
     TOPIC_CLOCK_TURNAROUND,
     TOPIC_MONITOR_VERDICT,
@@ -67,7 +68,6 @@ log = logging.getLogger(__name__)
 DEFAULT_RATE_HZ = 20.0          # /rig/state
 MONITOR_RATE_RATIO = 1.25       # /monitor/verdict runs faster: 25 Hz vs 20 Hz
 HEARTBEAT_HZ = 1.0              # /rig/interlock and /clock/turnaround
-DEFAULT_WIND_MS = 3.4
 DEFAULT_SITE = "site1"
 DEFAULT_RIG_ID = "rig-01"
 TARGET_TURNAROUND_S = 120.0
@@ -78,44 +78,12 @@ MOCK_MONITOR_DEVICE = "orin-nano-super"
 MOCK_FIRMWARE = "0.3.1"
 MOCK_INTERLOCK_SOURCE = "esp32-01"
 
-# One mate attempt, as (phase, duration_s, joint target). The arm interpolates
-# smoothly from the previous target to this one over the phase's duration.
-# Joint order is JOINT_NAMES: shoulder_pan, shoulder_lift, elbow_flex,
-# wrist_flex, wrist_roll, gripper.
-SCRIPT: tuple[tuple[Phase, float, tuple[float, ...]], ...] = (
-    (Phase.IDLE, 3.0, (0.00, -0.20, 0.30, 0.00, 0.00, 0.00)),
-    (Phase.PERMIT_WAIT, 3.0, (0.00, -0.20, 0.30, 0.00, 0.00, 0.00)),
-    (Phase.APPROACH, 14.0, (0.14, -0.88, 1.20, 0.05, -0.31, 0.03)),
-    (Phase.FINE_ALIGN, 8.0, (0.15, -0.95, 1.28, 0.06, -0.30, 0.03)),
-    (Phase.INSERT, 8.0, (0.15, -1.02, 1.36, 0.07, -0.30, 0.03)),
-    (Phase.LATCH_VERIFY, 4.0, (0.15, -1.03, 1.37, 0.07, -0.30, 0.00)),
-    (Phase.MATED, 4.0, (0.15, -1.03, 1.37, 0.07, -0.30, 0.00)),
-    (Phase.RETRACT, 8.0, (0.00, -0.20, 0.30, 0.00, 0.00, 0.00)),
-)
-
-CYCLE_S = sum(duration for _, duration, _ in SCRIPT)
-
-# Phases in which a run is under way. IDLE is between runs.
-ACTIVE_PHASES = frozenset(p for p, _, _ in SCRIPT) - {Phase.IDLE}
-
-# Phases in which the arm is allowed to move. Before the permit is granted
-# the interlock denies with PERMIT_NOT_GRANTED, which is what makes the
-# permit a precondition rather than a suggestion.
+# Phases in which the arm is permitted to move. ABORT is deliberately absent:
+# a vetoed run holds position, it does not retract itself.
 MOVING_PHASES = frozenset(
     {Phase.APPROACH, Phase.FINE_ALIGN, Phase.INSERT, Phase.LATCH_VERIFY,
      Phase.MATED, Phase.RETRACT}
 )
-
-# Seconds into the cycle at which each phase begins.
-PHASE_START_S: dict[Phase, float] = {}
-_acc = 0.0
-for _phase, _dur, _ in SCRIPT:
-    PHASE_START_S[_phase] = _acc
-    _acc += _dur
-
-RUN_START_S = PHASE_START_S[Phase.PERMIT_WAIT]   # the clock starts here
-PERMIT_GRANTED_S = PHASE_START_S[Phase.APPROACH]  # and the permit lands here
-RUN_STOP_S = PHASE_START_S[Phase.MATED]           # turnaround measured to mate
 
 
 def _smoothstep(x: float) -> float:
@@ -132,7 +100,8 @@ class RigSimulator:
     seeded noise), which is what makes replay deterministic and CI repeatable.
     """
 
-    base_wind_ms: float = DEFAULT_WIND_MS
+    scenario: Scenario = NOMINAL
+    wind_ms: Optional[float] = None    # overrides the scenario's wind
     site: str = DEFAULT_SITE
     rig_id: str = DEFAULT_RIG_ID
     seed: int = 0
@@ -141,15 +110,21 @@ class RigSimulator:
         self._rng = random.Random(self.seed)
         self._state_seq = itertools.count()
         self._verdict_seq = itertools.count()
+        self._base_wind = (
+            self.wind_ms if self.wind_ms is not None else self.scenario.wind_ms
+        )
 
     # --- where we are -------------------------------------------------------
 
     def cycle_of(self, t: float) -> int:
-        return int(t // CYCLE_S)
+        return int(t // self.scenario.cycle_s)
+
+    def into_cycle(self, t: float) -> float:
+        return t % self.scenario.cycle_s
 
     def run_id_at(self, t: float) -> Optional[str]:
-        """None while IDLE — there is no run between attempts."""
-        if self.phase_at(t) is Phase.IDLE:
+        """None before the attempt starts — there is no run between attempts."""
+        if self.into_cycle(t) < self.scenario.run_start_s:
             return None
         return f"run-mock-{self.cycle_of(t):03d}"
 
@@ -158,41 +133,58 @@ class RigSimulator:
 
     def _segment(
         self, t: float
-    ) -> tuple[Phase, float, float, tuple[float, ...], tuple[float, ...]]:
-        """-> (phase, progress 0..1, duration_s, start joints, target joints).
+    ) -> tuple[Phase, float, float, float, tuple[float, ...], tuple[float, ...]]:
+        """-> (phase, progress 0..1, duration_s, segment_start_s, from, to).
 
         `duration_s` is returned because velocity is the rate of change of the
-        interpolation, and the interpolation is spread across the whole phase:
-        without dividing by the duration the reported velocity is out by a
-        factor of however many seconds the phase lasts.
+        interpolation, and the interpolation is spread across the whole
+        segment: without dividing by the duration the reported velocity is out
+        by a factor of however many seconds the segment lasts.
+
+        `segment_start_s` is returned rather than looked up by phase, because
+        a scenario may use the same phase twice (the wind run is IDLE both
+        before and after the refusal).
         """
-        elapsed = t % CYCLE_S
-        previous = SCRIPT[-1][2]
-        for phase, duration, target in SCRIPT:
+        script = self.scenario.script
+        elapsed = self.into_cycle(t)
+        previous = script[-1][2]
+        start = 0.0
+        for phase, duration, target in script:
             if elapsed < duration:
-                return phase, elapsed / duration, duration, previous, target
+                return phase, elapsed / duration, duration, start, previous, target
             elapsed -= duration
+            start += duration
             previous = target
-        phase, duration, target = SCRIPT[-1]
-        return phase, 1.0, duration, previous, target
+        phase, duration, target = script[-1]
+        return phase, 1.0, duration, start - duration, previous, target
 
     def _wind_at(self, t: float) -> float:
         """Slow sine plus gusts. Never negative."""
         swell = 0.8 * math.sin(t * 0.17)
         gust = 0.5 * self._rng.random()
-        return max(0.0, self.base_wind_ms + swell + gust)
+        return max(0.0, self._base_wind + swell + gust)
 
     def _fan_setting(self) -> int:
         """The physical dial, which does not move while the anemometer wanders."""
         for step, threshold in enumerate((1.5, 4.0, 7.0, 10.0)):
-            if self.base_wind_ms < threshold:
+            if self._base_wind < threshold:
                 return step
         return 4
+
+    def vetoed_at(self, t: float) -> bool:
+        """Has the monitor vetoed by this point in the cycle?
+
+        LATCHING: once it fires it stays true for the rest of the run. A hand
+        leaving the frame must not restart the arm — auto-clearing turns a
+        person reaching in into a stutter-stop-start (docs/DECISIONS.md O-006).
+        """
+        veto_at = self.scenario.veto_at_s
+        return veto_at is not None and self.into_cycle(t) >= veto_at
 
     # --- /rig/state ---------------------------------------------------------
 
     def rig_state_at(self, t: float) -> RigState:
-        phase, progress, duration, start, target = self._segment(t)
+        phase, progress, duration, _start, origin, target = self._segment(t)
         ease = _smoothstep(progress)
         wind = self._wind_at(t)
 
@@ -202,13 +194,13 @@ class RigSimulator:
 
         position = [
             a + (b - a) * ease + self._rng.gauss(0.0, jitter)
-            for a, b in zip(start, target)
+            for a, b in zip(origin, target)
         ]
         # Velocity from the derivative of smoothstep, so it peaks mid-move and
         # goes to zero at both ends. The `/ duration` is load-bearing:
-        # smoothstep runs over the phase, not over one second.
+        # smoothstep runs over the segment, not over one second.
         speed = 6.0 * progress * (1.0 - progress) / duration
-        velocity = [(b - a) * speed for a, b in zip(start, target)]
+        velocity = [(b - a) * speed for a, b in zip(origin, target)]
 
         # Force ramps only while the connector is being pushed in, then HOLDS.
         # Ramping again during LATCH_VERIFY would say the connector unseated
@@ -237,12 +229,15 @@ class RigSimulator:
             tcp_pose=self._tcp_for(position),
             sensors=Sensors(
                 estop_engaged=False,
-                beam_broken=False,
+                # The hand that triggers the abort also breaks the beam. The
+                # two sensors see the same event, which is the point of having
+                # both — vision alone is not a safety device.
+                beam_broken=self.vetoed_at(t),
                 fsr_n=force_n,
                 # The latch closes partway through LATCH_VERIFY and STAYS
                 # closed. Testing `progress > 0.5` alone would reopen it for
                 # the first half of MATED, because progress resets at every
-                # phase boundary — a latch does not close, open, then close.
+                # segment boundary.
                 latch_closed=(
                     phase is Phase.MATED
                     or (phase is Phase.LATCH_VERIFY and progress > 0.5)
@@ -286,23 +281,26 @@ class RigSimulator:
     # --- /rig/interlock -----------------------------------------------------
 
     def interlock_at(self, t: float) -> InterlockState:
-        """Permissive only once the permit is granted.
+        """Permissive only once the permit is granted, and never after a veto.
 
-        Before that the board denies with PERMIT_NOT_GRANTED, which is what
-        makes the reasoner a precondition for motion rather than advice the
-        rig is free to ignore.
+        Before the permit the board denies with PERMIT_NOT_GRANTED, which is
+        what makes the reasoner a precondition for motion rather than advice
+        the rig is free to ignore.
         """
         phase = self.phase_at(t)
-        moving_allowed = phase in MOVING_PHASES
-        reasons: list[InterlockReason] = (
-            [] if moving_allowed else [InterlockReason.PERMIT_NOT_GRANTED]
-        )
+        vetoed = self.vetoed_at(t)
+        reasons: list[InterlockReason] = []
+        if vetoed:
+            reasons.append(InterlockReason.MONITOR_VETO)
+        elif phase not in MOVING_PHASES:
+            reasons.append(InterlockReason.PERMIT_NOT_GRANTED)
+
         return InterlockState(
             ts=now_ts(),
             site=self.site,
             rig_id=self.rig_id,
             run_id=self.run_id_at(t),
-            permissive=moving_allowed,
+            permissive=not reasons,
             continuity=phase is Phase.MATED,
             isolation=True,
             estop_engaged=False,
@@ -320,8 +318,7 @@ class RigSimulator:
     # --- /monitor/verdict ---------------------------------------------------
 
     def verdict_at(self, t: float) -> MonitorVerdict:
-        """Nominal run: always clear. The veto path arrives with the abort
-        scenario (Step 5)."""
+        vetoed = self.vetoed_at(t)
         frame_age = 0.030 + self._rng.random() * 0.010
         ts = now_ts()
         return MonitorVerdict(
@@ -329,9 +326,9 @@ class RigSimulator:
             seq=next(self._verdict_seq),
             rig_id=self.rig_id,
             run_id=self.run_id_at(t),
-            ok=True,
-            veto=False,
-            hazard=None,
+            ok=not vetoed,
+            veto=vetoed,
+            hazard=Hazard.HAND_IN_WORKSPACE if vetoed else None,
             confidence=round(0.94 + self._rng.random() * 0.05, 3),
             frame_ts=ts - frame_age,
             latency_ms=round(frame_age * 1000, 1),
@@ -344,30 +341,46 @@ class RigSimulator:
     def permit_at(self, t: float) -> PermitDecision:
         """Published once per run, at the moment the reasoner answers.
 
-        Every limit here is one the deterministic tier is expected to enforce
-        (docs/DECISIONS.md O-008) — an unenforced limit is decoration.
+        The decision follows from the NUMBERS: the wind scenario refuses
+        because its wind is above the procedure's cap, not because a flag was
+        set. Every limit on an authorisation is one the deterministic tier is
+        expected to enforce (docs/DECISIONS.md O-008) — an unenforced limit is
+        decoration.
         """
+        sc = self.scenario
         run_id = f"run-mock-{self.cycle_of(t):03d}"
         wind = round(self._wind_at(t), 2)
         digest = hashlib.sha256(f"{run_id}:{wind}".encode()).hexdigest()
+
+        if sc.authorized:
+            reasons = [
+                f"Wind {wind} m/s is within the {MAX_WIND_MS} m/s cap in SP-04 3.2.",
+                "BMS reports no active faults; CCS preconditions satisfied.",
+                "No NOTAM affecting pad 1 for the current window.",
+            ]
+            limits = {
+                "max_wind_ms": MAX_WIND_MS,
+                "max_approach_speed_ms": 0.05,
+                "max_insert_force_n": 12.0,
+                "max_attempt_s": 120,
+            }
+        else:
+            reasons = [
+                f"Anemometer reads {wind} m/s. Site procedure SP-04 3.2 caps "
+                f"automated mating at {MAX_WIND_MS} m/s.",
+                "No provision in the procedure permits an exception at this wind speed.",
+            ]
+            limits = {}
+
         return PermitDecision(
             ts=now_ts(),
             request_id=f"req-mock-{self.cycle_of(t):04d}",
             run_id=run_id,
-            authorized=True,
-            profile="NOMINAL",
-            limits={
-                "max_wind_ms": 8.0,
-                "max_approach_speed_ms": 0.05,
-                "max_insert_force_n": 12.0,
-                "max_attempt_s": 120,
-            },
-            reasons=[
-                f"Wind {wind} m/s is within the 8.0 m/s cap in SP-04 3.2.",
-                "BMS reports no active faults; CCS preconditions satisfied.",
-                "No NOTAM affecting pad 1 for the current window.",
-            ],
-            refusal_code=None,
+            authorized=sc.authorized,
+            profile=sc.profile,
+            limits=limits,
+            reasons=reasons,
+            refusal_code=sc.refusal_code,
             inputs_digest=f"sha256:{digest}",
             model_id=MOCK_MODEL_ID,
             latency_ms=round(2400 + self._rng.random() * 900, 1),
@@ -376,38 +389,36 @@ class RigSimulator:
     # --- /clock/turnaround --------------------------------------------------
 
     def clock_at(self, t: float) -> Optional[TurnaroundClock]:
-        """None while IDLE. The clock starts when the permit is REQUESTED,
-        not at first motion — on a refusal the permit wait is the entire run,
-        and excluding reasoning time would make the headline number dishonest.
+        """None before the attempt starts.
+
+        Once stopped the clock is a RECORD of the finished run, not live
+        telemetry — so the phase freezes too. Letting `phase` keep tracking the
+        rig while `elapsed_s` is frozen produces the contradiction "RETRACT
+        started at 41 s, in a run that lasted 37 s".
         """
-        phase = self.phase_at(t)
-        if phase is Phase.IDLE:
+        sc = self.scenario
+        into = self.into_cycle(t)
+        if into < sc.run_start_s:
             return None
 
-        cycle_start = self.cycle_of(t) * CYCLE_S
-        into_cycle = t - cycle_start
         ts = now_ts()
-        t_start = ts - (into_cycle - RUN_START_S)
-
-        stopped = into_cycle >= RUN_STOP_S
-        # Once stopped, the clock is a RECORD of the finished run, not live
-        # telemetry — so the phase freezes too. Letting `phase` keep tracking
-        # the rig while `elapsed_s` is frozen produces the contradiction
-        # "RETRACT started at 41 s, in a run that lasted 37 s".
-        reported_phase = Phase.MATED if stopped else phase
-        elapsed = (RUN_STOP_S if stopped else into_cycle) - RUN_START_S
+        stopped = into >= sc.stop_at_s
+        at = sc.stop_at_s if stopped else into
+        phase, _prog, _dur, seg_start, _o, _tg = self._segment(
+            self.cycle_of(t) * sc.cycle_s + min(at, sc.cycle_s - 1e-6)
+        )
 
         return TurnaroundClock(
             ts=ts,
             run_id=f"run-mock-{self.cycle_of(t):03d}",
-            t_start=t_start,
+            t_start=ts - (into - sc.run_start_s),
             t_now=ts,
-            elapsed_s=round(elapsed, 2),
-            phase=reported_phase,
-            phase_started_s=round(PHASE_START_S[reported_phase] - RUN_START_S, 2),
+            elapsed_s=round(at - sc.run_start_s, 2),
+            phase=phase,
+            phase_started_s=round(max(0.0, seg_start - sc.run_start_s), 2),
             target_s=TARGET_TURNAROUND_S,
             stopped=stopped,
-            outcome=Outcome.MATED if stopped else None,
+            outcome=sc.outcome if stopped else None,
         )
 
 
@@ -448,12 +459,13 @@ class _Scheduler:
 
 
 def run(
+    scenario: Scenario = NOMINAL,
     rate_hz: float = DEFAULT_RATE_HZ,
-    wind_ms: float = DEFAULT_WIND_MS,
+    wind_ms: Optional[float] = None,
     once: bool = False,
     verbose: bool = False,
 ) -> None:
-    sim = RigSimulator(base_wind_ms=wind_ms)
+    sim = RigSimulator(scenario=scenario, wind_ms=wind_ms)
     scheduler = _Scheduler(
         {
             TOPIC_RIG_STATE: 1.0 / rate_hz,
@@ -467,12 +479,17 @@ def run(
     last_interlock_key: Optional[tuple] = None
     last_permit_cycle = -1
     last_phase: Optional[Phase] = None
+    last_veto = False
 
     with Bus(client_id="rig-mock") as bus:
         log.info(
-            "publishing all five topics (/rig/state %.1f Hz, /monitor/verdict %.1f Hz, "
-            "interlock + clock %.1f Hz), wind %.1f m/s — ctrl-C to stop",
-            rate_hz, rate_hz * MONITOR_RATE_RATIO, HEARTBEAT_HZ, wind_ms,
+            "scenario '%s' — %s", scenario.name, scenario.description,
+        )
+        log.info(
+            "cycle %.0fs; /rig/state %.1f Hz, /monitor/verdict %.1f Hz, "
+            "interlock + clock %.1f Hz; wind %.1f m/s — ctrl-C to stop",
+            scenario.cycle_s, rate_hz, rate_hz * MONITOR_RATE_RATIO,
+            HEARTBEAT_HZ, sim._base_wind,
         )
         while True:
             t = time.monotonic() - started
@@ -489,23 +506,28 @@ def run(
                     )
 
             if scheduler.due(TOPIC_MONITOR_VERDICT, t) or once:
-                bus.publish(TOPIC_MONITOR_VERDICT, sim.verdict_at(t))
+                verdict = sim.verdict_at(t)
+                bus.publish(TOPIC_MONITOR_VERDICT, verdict)
+                if verdict.veto and not last_veto:
+                    log.info("t=%6.1fs  monitor   -> VETO (%s)", t, verdict.hazard.value)
+                last_veto = verdict.veto
 
-            # Permit BEFORE interlock. The interlock granting permission is a
-            # consequence of the permit existing; publishing them the other
-            # way round shows a console the effect before the cause, which is
-            # precisely the causality this demo is meant to make visible.
+            # Permit BEFORE interlock. The interlock changing is a CONSEQUENCE
+            # of the permit; publishing them the other way round shows a
+            # console the effect before the cause.
             cycle = sim.cycle_of(t)
-            into_cycle = t - cycle * CYCLE_S
-            if (into_cycle >= PERMIT_GRANTED_S and cycle != last_permit_cycle) or once:
+            if (sim.into_cycle(t) >= scenario.permit_at_s and cycle != last_permit_cycle) or once:
                 decision = sim.permit_at(t)
                 bus.publish(TOPIC_PERMIT_DECISION, decision)
                 log.info(
-                    "t=%6.1fs  permit    -> %s (%s)",
+                    "t=%6.1fs  permit    -> %s (%s)%s",
                     t,
                     "AUTHORIZED" if decision.authorized else "REFUSED",
                     decision.profile,
+                    "" if decision.authorized else f" {decision.refusal_code.value}",
                 )
+                if not decision.authorized:
+                    log.info("           %s", decision.reasons[0])
                 last_permit_cycle = cycle
 
             # Interlock: heartbeat, PLUS immediately on any change. Silence
@@ -534,17 +556,26 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    ap.add_argument("--scenario", choices=sorted(SCENARIOS), default="nominal",
+                    help="which run to play (default: nominal)")
     ap.add_argument("--rate", type=float, default=DEFAULT_RATE_HZ,
                     help="/rig/state rate in Hz; the monitor scales with it, "
                          "interlock and clock stay at 1 Hz")
-    ap.add_argument("--wind", type=float, default=DEFAULT_WIND_MS, help="base wind, m/s")
+    ap.add_argument("--wind", type=float, default=None,
+                    help="override the scenario's base wind, m/s")
     ap.add_argument("--once", action="store_true", help="publish one of each and exit")
     ap.add_argument("-v", "--verbose", action="store_true", help="log every /rig/state")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
-        run(rate_hz=args.rate, wind_ms=args.wind, once=args.once, verbose=args.verbose)
+        run(
+            scenario=SCENARIOS[args.scenario],
+            rate_hz=args.rate,
+            wind_ms=args.wind,
+            once=args.once,
+            verbose=args.verbose,
+        )
     except KeyboardInterrupt:
         log.info("stopped")
 
