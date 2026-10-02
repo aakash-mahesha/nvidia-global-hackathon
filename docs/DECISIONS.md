@@ -40,12 +40,56 @@ who decides alone.
 | O-013 | **Who is A1 / A2 / B1 / B2** | all four | every task assignment in `EXECUTION-PLAN.md` | The lane table is unfilled. Per HTML plan §2, whoever is physically nearest the arm owns A1 — that one is not negotiable. | immediately |
 | O-014 | **Origin of the printed parts** | A1 | pre-existing-work statement in README | State whether the fuselage / CCS2 inlet / fiducial ring designs were authored in the competition window or are prior art. Required before submission. | W5 |
 | O-015 | **Ratify `BUS-PAYLOADS.md` as normative** | all four | mock · console · rig · monitor | The file is currently marked PROPOSED. Once O-001…O-008 are closed, drop the banner and treat changes as joint decisions. | W2 |
+| O-016 | **What machine the rig host actually is** | A1 + A2 | broker address · Tailscale name · ESP32 link · episode capture · servo tier | The docs name "the rig host" throughout without ever saying what it is. Recommend a dedicated laptop or desktop at site 1, wired to the arm, running the broker and episode capture — **not** the Orin, which is already committed to Cosmos3-Edge at ≥25 Hz. Its hostname becomes the `mqtt://<rig-host>.<tailnet>.ts.net:1883` in D-002, and whether the ESP32 reaches it by WiFi or USB serial decides whether `allow_anonymous true` survives (see D-002 follow-up). | W2 |
+| O-017 | **Where the GR00T policy runs at inference time** | B1 + A2 | serving endpoint (O-010) · action-loop latency · demo resilience | `CONTRACTS.md` §2 freezes the endpoint *shape* but never its location, and the README puts all GPU work including *serve* on Nebius — which reads as a 5–10 Hz action loop across the public internet. Recommend serving rig-side and keeping Nebius for training, augmentation and eval fan-out. If no site-1 GPU exists, measure the round trip before committing and report the number honestly rather than discovering it on demo night. | W3 |
 
 ---
 
 ## 2 · Decided
 
 Newest first.
+
+### D-006 · 2026-10-02 · The bus crosses sites via `tailscale serve`, not a second listener
+
+**Decision.** mosquitto stays bound to `127.0.0.1` only. Tailscale proxies the
+port into it:
+
+    tailscale serve --tcp 1883 tcp://127.0.0.1:1883
+
+Run in the foreground, deliberately without `--bg`. The rig host is a stand-in
+laptop at site 1 until O-016 settles what the real machine is. The resulting
+`mqtt://<rig-host>.<tailnet>.ts.net:1883` goes in a personal `.env`, **not**
+committed `.env.shared` — the repo ships Apache-2.0 and public, and there is no
+reason to publish the team's infrastructure naming. D-003's placeholder comment
+stays as the placeholder.
+
+**Why not a second listener on the tailnet address.** mosquitto cannot bind an
+address that does not exist, so the broker refuses to start any time Tailscale
+is down — turning a networking hiccup into a dead bus. The address is also
+per-machine and so cannot live in a committed config.
+
+**Why no `--bg`.** Foreground means the exposure dies with the terminal. The
+realistic failure here is not an attack; it is an unauthenticated robot bus
+left quietly reachable for weeks after whoever set it up has forgotten.
+
+**What it costs.** The proxy makes every connection appear to come from
+`127.0.0.1`, so mosquitto's connection log can no longer attribute traffic to
+a machine — a real loss, since that logging is on specifically for integration
+debugging. Accepted for now. The fix, if it starts to matter, is
+`include_dir infra/mosquitto.d` with that directory gitignored, letting each
+host add its own listener and recover real peer addresses.
+
+**Anonymous access stays, conditionally.** `allow_anonymous true` is defensible
+only while the bus is tailnet-exclusive and the tailnet holds only invited
+devices. Two triggers make `password_file` mandatory: the ESP32 joining over
+WiFi, which puts the broker on a lab LAN (O-016), or a tailnet device appearing
+that the team does not control. Either way, narrow the Tailscale ACL to the dev
+machines rather than trusting every node.
+
+**Verified.** A subscriber on `<rig-host>.<tailnet>.ts.net` receives messages
+published to the loopback broker, so MagicDNS resolution and the proxy path
+both work. Cross-*machine* reachability is **not** yet proven — that needs a
+second device on the tailnet, and it is what remains of A2-1.3.
 
 ### D-005 · 2026-09-27 · Decisions are recorded in this file, not a CHANGELOG
 
